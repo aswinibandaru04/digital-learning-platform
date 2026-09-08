@@ -436,8 +436,8 @@ Use exactly this structure:
     except Exception as error:
 
         print(
-            "Gemini question generation error:",
-            error
-        )
+        "Gemini question generation error:",
+        repr(error)
+    )
 
-        raise
+    raise
