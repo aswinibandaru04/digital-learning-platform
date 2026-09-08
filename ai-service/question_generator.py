@@ -2,6 +2,7 @@ import os
 import json
 from dotenv import load_dotenv
 from google import genai
+import time
 
 load_dotenv()
 
@@ -246,19 +247,63 @@ Use exactly this structure:
 """
 
 
-    # --------------------------------------------------
-    # CALL GEMINI
+       # --------------------------------------------------
+    # CALL GEMINI WITH RETRY
     # --------------------------------------------------
 
     try:
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json"
-            }
-        )
+        response = None
+
+        for attempt in range(3):
+
+            try:
+
+                print(
+                    f"Trying Gemini: attempt {attempt + 1}/3"
+                )
+
+                response = client.models.generate_content(
+                    model="gemini-3.6-flash",
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json"
+                    }
+                )
+
+                print("Gemini response received successfully")
+                break
+
+            except Exception as error:
+
+                print(
+                    f"Gemini attempt {attempt + 1} failed:",
+                    repr(error)
+                )
+
+                # Retry only for temporary 503 errors
+                if "503" in str(error) or "UNAVAILABLE" in str(error):
+
+                    if attempt < 2:
+                        wait_time = 3 * (attempt + 1)
+
+                        print(
+                            f"Gemini temporarily unavailable. "
+                            f"Retrying in {wait_time} seconds..."
+                        )
+
+                        time.sleep(wait_time)
+
+                    else:
+                        raise
+
+                else:
+                    raise
+
+        if response is None:
+            raise Exception(
+                "Gemini did not return a response"
+            )
 
         # --------------------------------------------------
         # PARSE AI RESPONSE
@@ -436,8 +481,8 @@ Use exactly this structure:
     except Exception as error:
 
         print(
-        "Gemini question generation error:",
-        repr(error)
-    )
+            "Gemini question generation error:",
+            repr(error)
+        )
 
-    raise
+        raise
