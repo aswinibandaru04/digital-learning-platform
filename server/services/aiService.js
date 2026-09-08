@@ -1,6 +1,6 @@
 const axios = require("axios");
 
-const AI_SERVICE_URL = "http://127.0.0.1:8000";
+const AI_SERVICE_URL = "https://digital-learning-platform-1.onrender.com";
 
 const generateQuestions = async (
     topic,
