@@ -264,7 +264,7 @@ Use exactly this structure:
                 )
 
                 response = client.models.generate_content(
-                    model="gemini-3.6-flash",
+                    model="gemini-2.5-flash",
                     contents=prompt,
                     config={
                         "response_mime_type": "application/json"
@@ -276,19 +276,31 @@ Use exactly this structure:
 
             except Exception as error:
 
+                error_text = str(error)
+
                 print(
                     f"Gemini attempt {attempt + 1} failed:",
                     repr(error)
                 )
 
-                # Retry only for temporary 503 errors
-                if "503" in str(error) or "UNAVAILABLE" in str(error):
+                # ------------------------------------------
+                # RETRY FOR RATE LIMIT / TEMPORARY ERRORS
+                # ------------------------------------------
+
+                if (
+                    "429" in error_text
+                    or "Too Many Requests" in error_text
+                    or "RESOURCE_EXHAUSTED" in error_text
+                    or "503" in error_text
+                    or "UNAVAILABLE" in error_text
+                ):
 
                     if attempt < 2:
-                        wait_time = 3 * (attempt + 1)
+
+                        wait_time = 5 * (attempt + 1)
 
                         print(
-                            f"Gemini temporarily unavailable. "
+                            f"Gemini temporarily unavailable/rate limited. "
                             f"Retrying in {wait_time} seconds..."
                         )
 
