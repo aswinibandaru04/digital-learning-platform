@@ -1,8 +1,8 @@
 import os
 import json
+import time
 from dotenv import load_dotenv
 from google import genai
-import time
 
 load_dotenv()
 
@@ -13,7 +13,6 @@ if not API_KEY:
 
 client = genai.Client(api_key=API_KEY)
 
-
 SUPPORTED_TYPES = [
     "multiple-choice",
     "true-false",
@@ -21,6 +20,9 @@ SUPPORTED_TYPES = [
     "short-answer",
     "mixed"
 ]
+
+PRIMARY_MODEL = "gemini-3.6-flash"
+FALLBACK_MODEL = "gemini-3.5-flash-lite"
 
 
 def generate_questions(
@@ -142,7 +144,6 @@ For short-answer:
 Do not make every question the same type.
 """
 
-
     # --------------------------------------------------
     # AI PROMPT
     # --------------------------------------------------
@@ -171,59 +172,36 @@ Requested question type:
 GENERAL REQUIREMENTS:
 
 1. Generate EXACTLY {number_of_questions} questions.
-
 2. Every question must be directly related to:
    "{topic}"
-
 3. Follow the requested difficulty:
    "{difficulty}"
-
 4. Questions should be educational and meaningful.
-
 5. Avoid duplicate or nearly identical questions.
-
 6. Avoid meaningless placeholder questions.
-
 7. Use clear language suitable for school students.
-
 8. Make the questions test understanding of the topic.
-
 9. Every question MUST include a clear explanation.
-
 10. The explanation MUST explain WHY the correct answer
     is correct.
-
 11. Do not simply repeat the correct answer.
-
 12. Explain the underlying concept in simple language.
-
 13. The explanation should be appropriate for the
     specified difficulty level.
-
 14. For grammar questions, explain the relevant grammar rule.
-
 15. For mathematics questions, explain the calculation
     or reasoning step by step.
-
 16. For science questions, explain the scientific concept.
-
 17. For programming questions, explain why the code or
     concept works.
-
 18. For history or social science questions, explain the
     relevant fact, event, cause, or relationship.
-
 19. Keep explanations clear and concise, usually
     1-4 sentences.
-
 20. Do not include unnecessary information.
-
 21. Return ONLY valid JSON.
-
 22. Do NOT return markdown.
-
 23. Do NOT return ```json.
-
 24. Return a JSON array.
 
 Use exactly this structure:
@@ -246,82 +224,104 @@ Use exactly this structure:
 ]
 """
 
-
-       # --------------------------------------------------
-    # CALL GEMINI WITH RETRY
     # --------------------------------------------------
+    # GEMINI REQUEST WITH RETRY + FALLBACK
+    # --------------------------------------------------
+
+    models_to_try = [
+        PRIMARY_MODEL,
+        FALLBACK_MODEL
+    ]
+
+    response = None
+    response_text = None
 
     try:
 
-        response = None
+        for model in models_to_try:
 
-        for attempt in range(3):
+            print(f"Using Gemini model: {model}")
 
-            try:
+            for attempt in range(3):
 
-                print(
-                    f"Trying Gemini: attempt {attempt + 1}/3"
-                )
+                try:
 
-                response = client.models.generate_content(
-                    model="gemini-3.6-flash",
-                    contents=prompt,
-                    config={
-                        "response_mime_type": "application/json"
-                    }
-                )
+                    print(
+                        f"Trying Gemini: {model} "
+                        f"attempt {attempt + 1}/3"
+                    )
 
-                print("Gemini response received successfully")
-                break
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config={
+                            "response_mime_type": "application/json"
+                        }
+                    )
 
-            except Exception as error:
+                    print(
+                        f"Gemini response received successfully "
+                        f"from {model}"
+                    )
 
-                error_text = str(error)
+                    response_text = response.text
+                    break
 
-                print(
-                    f"Gemini attempt {attempt + 1} failed:",
-                    repr(error)
-                )
+                except Exception as error:
 
-                # ------------------------------------------
-                # RETRY FOR RATE LIMIT / TEMPORARY ERRORS
-                # ------------------------------------------
+                    error_text = str(error)
 
-                if (
-                    "429" in error_text
-                    or "Too Many Requests" in error_text
-                    or "RESOURCE_EXHAUSTED" in error_text
-                    or "503" in error_text
-                    or "UNAVAILABLE" in error_text
-                ):
+                    print(
+                        f"Gemini attempt {attempt + 1} failed:",
+                        repr(error)
+                    )
 
-                    if attempt < 2:
+                    temporary_error = (
+                        "429" in error_text
+                        or "Too Many Requests" in error_text
+                        or "RESOURCE_EXHAUSTED" in error_text
+                        or "503" in error_text
+                        or "UNAVAILABLE" in error_text
+                    )
 
-                        wait_time = 5 * (attempt + 1)
+                    if temporary_error:
 
-                        print(
-                            f"Gemini temporarily unavailable/rate limited. "
-                            f"Retrying in {wait_time} seconds..."
-                        )
+                        if attempt < 2:
 
-                        time.sleep(wait_time)
+                            wait_time = 5 * (2 ** attempt)
+
+                            print(
+                                f"Gemini temporarily unavailable. "
+                                f"Retrying in {wait_time} seconds..."
+                            )
+
+                            time.sleep(wait_time)
+
+                        else:
+
+                            print(
+                                f"{model} failed after 3 attempts."
+                            )
+
+                            # Move to fallback model
+                            break
 
                     else:
                         raise
 
-                else:
-                    raise
+            if response_text:
+                break
 
-        if response is None:
+        if not response_text:
             raise Exception(
-                "Gemini did not return a response"
+                "All Gemini models failed to generate questions."
             )
 
         # --------------------------------------------------
         # PARSE AI RESPONSE
         # --------------------------------------------------
 
-        questions = json.loads(response.text)
+        questions = json.loads(response_text)
 
         if not isinstance(questions, list):
             raise ValueError(
@@ -334,7 +334,6 @@ Use exactly this structure:
                 f"but received {len(questions)}"
             )
 
-
         # --------------------------------------------------
         # VALIDATE QUESTIONS
         # --------------------------------------------------
@@ -343,39 +342,21 @@ Use exactly this structure:
 
         for question in questions:
 
-            question_text = question.get(
-                "questionText"
-            )
-
-            generated_type = question.get(
-                "questionType"
-            )
-
-            options = question.get(
-                "options",
-                []
-            )
-
-            correct_answer = question.get(
-                "correctAnswer"
-            )
-
-            explanation = question.get(
-                "explanation"
-            )
-
+            question_text = question.get("questionText")
+            generated_type = question.get("questionType")
+            options = question.get("options", [])
+            correct_answer = question.get("correctAnswer")
+            explanation = question.get("explanation")
 
             if not question_text:
                 raise ValueError(
                     "Question text is missing"
                 )
 
-
             if not explanation:
                 raise ValueError(
                     "Explanation is missing"
                 )
-
 
             if generated_type not in [
                 "multiple-choice",
@@ -387,10 +368,9 @@ Use exactly this structure:
                     f"Invalid question type: {generated_type}"
                 )
 
-
-            # ------------------------------------------
-            # MULTIPLE CHOICE VALIDATION
-            # ------------------------------------------
+            # --------------------------------------------------
+            # MULTIPLE CHOICE
+            # --------------------------------------------------
 
             if generated_type == "multiple-choice":
 
@@ -417,21 +397,14 @@ Use exactly this structure:
                         "one of the options"
                     )
 
-
-            # ------------------------------------------
-            # TRUE / FALSE VALIDATION
-            # ------------------------------------------
+            # --------------------------------------------------
+            # TRUE / FALSE
+            # --------------------------------------------------
 
             elif generated_type == "true-false":
 
-                if options != [
-                    "True",
-                    "False"
-                ]:
-                    options = [
-                        "True",
-                        "False"
-                    ]
+                if options != ["True", "False"]:
+                    options = ["True", "False"]
 
                 if correct_answer not in [
                     "True",
@@ -442,10 +415,9 @@ Use exactly this structure:
                         "True or False"
                     )
 
-
-            # ------------------------------------------
+            # --------------------------------------------------
             # FILL IN THE BLANK
-            # ------------------------------------------
+            # --------------------------------------------------
 
             elif generated_type == "fill-in-the-blank":
 
@@ -456,10 +428,9 @@ Use exactly this structure:
                         "Fill-in-the-blank answer is missing"
                     )
 
-
-            # ------------------------------------------
+            # --------------------------------------------------
             # SHORT ANSWER
-            # ------------------------------------------
+            # --------------------------------------------------
 
             elif generated_type == "short-answer":
 
@@ -471,11 +442,12 @@ Use exactly this structure:
                         "is missing"
                     )
 
-
-            # ------------------------------------------
+            # --------------------------------------------------
             # SAVE VALIDATED QUESTION
-            # ------------------------------------------
+            # --------------------------------------------------
+
             print("AI EXPLANATION:", explanation)
+
             validated_questions.append({
                 "questionText": question_text,
                 "questionType": generated_type,
@@ -486,9 +458,7 @@ Use exactly this structure:
                 "topic": topic
             })
 
-
         return validated_questions
-
 
     except Exception as error:
 
